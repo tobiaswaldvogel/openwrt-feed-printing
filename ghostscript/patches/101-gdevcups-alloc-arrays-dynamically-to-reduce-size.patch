@@ -1,0 +1,135 @@
+--- a/cups/gdevcups.c
++++ b/cups/gdevcups.c
+@@ -296,6 +296,12 @@
+  * The device descriptors...
+  */
+ 
++typedef struct matrix_s
++{
++   int   Matrix[3][3][CUPS_MAX_VALUE + 1];
++} *matrix_ptr;
++
++
+ typedef struct gx_device_cups_s
+ {
+   gx_device_common;			/* Standard GhostScript device stuff */
+@@ -317,9 +323,9 @@
+ #else
+   gx_color_value	DecodeLUT[256];	/* Output color to RGB value LUT */
+ #endif /* GX_COLOR_INDEX_TYPE */
+-  unsigned short	EncodeLUT[gx_max_color_value + 1];/* RGB value to output color LUT */
++  unsigned short        *EncodeLUT;/* RGB value to output color LUT */
+   int			Density[CUPS_MAX_VALUE + 1];/* Density LUT */
+-  int			Matrix[3][3][CUPS_MAX_VALUE + 1];/* Color transform matrix LUT */
++  matrix_ptr            mptr;
+   int                   user_icc;
+   int                   cupsRasterVersion;
+   char                  cupsBackSideOrientation[64];
+@@ -467,11 +473,9 @@
+   { 0x00, 0x40, 0x80, 0xc0, 0x10, 0x50, 0x90, 0xd0,\
+     0x20, 0x60, 0xa0, 0xe0, 0x30, 0x70, 0xb0, 0xf0 },/* RevUpper2 */\
+   {0x00},                                  /* DecodeLUT */\
+-  {0x00},                                  /* EncodeLUT */\
++  (void*)0,                                /* EncodeLUT */\
+   {0x00},                                  /* Density */\
+-  {{{0x00},{0x00},{0x00}},\
+-   {{0x00},{0x00},{0x00}},\
+-   {{0x00},{0x00},{0x00}}},                /* Matrix */\
++  (void*)0,                                /* Matrix */\
+   0,                                       /* user_icc */\
+   3,                                     /* cupsRasterVersion */\
+   "Normal",                                /* cupsBackSideOrientation */\
+@@ -601,6 +605,10 @@
+  /*
+   * Encode the color index...
+   */
++  if (!cups->EncodeLUT) {
++      cups->EncodeLUT = malloc(sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++      memset(cups->EncodeLUT, 0, sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++  }
+ 
+   shift = cups->header.cupsBitsPerColor;
+ 
+@@ -1775,16 +1783,18 @@
+    /*
+     * Color correct CMY...
+     */
+-
+-    tc = cups->Matrix[0][0][c] +
+-         cups->Matrix[0][1][m] +
+-	 cups->Matrix[0][2][y];
+-    tm = cups->Matrix[1][0][c] +
+-         cups->Matrix[1][1][m] +
+-	 cups->Matrix[1][2][y];
+-    ty = cups->Matrix[2][0][c] +
+-         cups->Matrix[2][1][m] +
+-	 cups->Matrix[2][2][y];
++    if (cups->mptr) {
++       tc = cups->mptr->Matrix[0][0][c] +
++            cups->mptr->Matrix[0][1][m] +
++            cups->mptr->Matrix[0][2][y];
++       tm = cups->mptr->Matrix[1][0][c] +
++            cups->mptr->Matrix[1][1][m] +
++            cups->mptr->Matrix[1][2][y];
++       ty = cups->mptr->Matrix[2][0][c] +
++            cups->mptr->Matrix[2][1][m] +
++            cups->mptr->Matrix[2][2][y];
++    } else
++      tc = tm = ty = 0;
+ 
+     if (tc < 0)
+       c = 0;
+@@ -1863,6 +1873,11 @@
+     k = cups->Density[k];
+   }
+ 
++  if (!cups->EncodeLUT) {
++      cups->EncodeLUT = malloc(sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++      memset(cups->EncodeLUT, 0, sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++  }
++
+   ic = cups->EncodeLUT[c];
+   im = cups->EncodeLUT[m];
+   iy = cups->EncodeLUT[y];
+@@ -2359,6 +2374,10 @@
+  /*
+   * Convert the RGB color to a color index...
+   */
++  if (!cups->EncodeLUT) {
++      cups->EncodeLUT = malloc(sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++      memset(cups->EncodeLUT, 0, sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
++  }
+ 
+   switch (cups->header.cupsColorSpace)
+   {
+@@ -4707,6 +4726,8 @@
+  /*
+   * Compute the lookup tables...
+   */
++  if (!cups->EncodeLUT)
++      cups->EncodeLUT = malloc(sizeof(*cups->EncodeLUT) * gx_max_color_value + 1);
+ 
+   for (i = 0; i <= gx_max_color_value; i ++)
+   {
+@@ -4838,16 +4859,19 @@
+ 
+   if (cups->HaveProfile)
+   {
++    if (!cups->mptr)
++      cups->mptr = malloc(sizeof(*(cups->mptr)));
++
+     for (i = 0; i < 3; i ++)
+       for (j = 0; j < 3; j ++)
+ 	for (k = 0; k <= CUPS_MAX_VALUE; k ++)
+ 	{
+-          cups->Matrix[i][j][k] = (int)((float)k * m[i][j] + 0.5);
++          cups->mptr->Matrix[i][j][k] = (int)((float)k * m[i][j] + 0.5);
+ 
+ #ifdef CUPS_DEBUG
+           if ((k & 4095) == 0)
+             dmprintf4(pdev->memory, "DEBUG2: cups->Matrix[%d][%d][%d] = %d\n",
+-                      i, j, k, cups->Matrix[i][j][k]);
++                      i, j, k, cups->mptr->Matrix[i][j][k]);
+ #endif /* CUPS_DEBUG */
+         }
+ 

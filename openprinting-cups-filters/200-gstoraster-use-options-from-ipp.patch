@@ -1,0 +1,44 @@
+--- a/filter/gstoraster.c
++++ b/filter/gstoraster.c
+@@ -868,33 +868,6 @@
+   }
+ #endif /* HAVE_CUPS_1_7 */
+     
+-  if (ppd)
+-  {
+-    cupsRasterInterpretPPD(&h,ppd,num_options,options,0);
+-#ifdef HAVE_CUPS_1_7
+-    if (outformat == OUTPUT_FORMAT_RASTER)
+-    {
+-      if ((attr = ppdFindAttr(ppd,"PWGRaster",0)) != 0 &&
+-	  (!strcasecmp(attr->value, "true") ||
+-	   !strcasecmp(attr->value, "on") ||
+-	   !strcasecmp(attr->value, "yes")))
+-	pwgraster = 1;
+-      if (pwgraster == 1)
+-	cupsRasterParseIPPOptions(&h, num_options, options, pwgraster, 0);
+-    }
+-#endif /* HAVE_CUPS_1_7 */
+-    if (outformat == OUTPUT_FORMAT_PXL)
+-    {
+-      if ((attr = ppdFindAttr(ppd,"ColorDevice",0)) != 0 &&
+-	  (!strcasecmp(attr->value, "false") ||
+-	   !strcasecmp(attr->value, "off") ||
+-	   !strcasecmp(attr->value, "no")))
+-	/* Monochrome PCL XL printer, according to PPD */
+-	pxlcolor = 0;
+-    }
+-  }
+-  else
+-  {
+ #ifdef HAVE_CUPS_1_7
+     if (outformat == OUTPUT_FORMAT_RASTER)
+     {
+@@ -923,7 +896,6 @@
+     fprintf(stderr, "ERROR: No PPD file specified.\n");
+     goto out;
+ #endif /* HAVE_CUPS_1_7 */
+-  }
+ 
+   if ((h.HWResolution[0] == 100) && (h.HWResolution[1] == 100)) {
+     /* No "Resolution" option */

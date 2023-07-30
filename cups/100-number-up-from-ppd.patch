@@ -1,0 +1,40 @@
+--- a/scheduler/job.c
++++ b/scheduler/job.c
+@@ -4095,6 +4095,19 @@
+     }
+   }
+ 
++  if (!ippFindAttribute(job->attrs, "number-up", IPP_TAG_ZERO) &&
++      (attr = ippFindAttribute(job->printer->ppd_attrs, "number-up", IPP_TAG_ZERO))) {
++    int numberup = ippGetInteger(attr, 0);
++
++    if (numberup > 1) {
++      char numberup_val[3];
++
++      cupsdLogJob(job, CUPSD_LOG_DEBUG2, "Adding numberup %d", numberup);
++      snprintf(numberup_val, sizeof(numberup_val), "%d", numberup);
++      num_pwgppds = cupsAddOption("number-up", numberup_val, num_pwgppds, &pwgppds);
++    }
++  }
++
+  /*
+   * Finally loop through the PWG->PPD mapped options and add them...
+   */
+--- a/scheduler/printers.c
++++ b/scheduler/printers.c
+@@ -4531,6 +4531,15 @@
+       ippAddResolution(p->ppd_attrs, IPP_TAG_PRINTER, "pwg-raster-document-resolution-supported", IPP_RES_PER_INCH, 300, 300);
+     }
+ 
++   {
++     ppd_option_t	*numberup;
++
++     if ((numberup = ppdFindOption(ppd, "NumberUp"))) {
++        cupsdLogMessage(CUPSD_LOG_DEBUG, "Found numberup %s", numberup->defchoice);
++        ippAddInteger(p->ppd_attrs, IPP_TAG_PRINTER, IPP_TAG_INTEGER, "number-up", strtol(numberup->defchoice, 0, 0));
++     }
++   }
++
+    /*
+     * Duplexing, etc...
+     */
