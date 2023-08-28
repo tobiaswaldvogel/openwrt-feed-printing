@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gutenprint
-PKG_VERSION:=5.3.4
-PKG_RELEASE:=2
+PKG_VERSION:=5.2.15
+PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_URL:=@SF/gimp-print
-PKG_MD5SUM:=537851d7b82e77a4c466c2c4f3a6a43e
+PKG_MD5SUM:=d0769dd44be985f1135518d4a5c73a8a
 
 #PKG_BUILD_DEPENDS:=gutenprint-cups/host cups
 #HOST_BUILD_DEPENDS:=libiconv/host
@@ -68,11 +68,11 @@ CONFIGURE_ARGS+= \
 define Build/Compile
 	# Replace the cross-compiled "extract-string" by a shell-script that
 	# runs the host's own compiled version (gutenprint needs to run this)
-	(cd $(PKG_BUILD_DIR) && $(MAKE) -C src/printers check_duplicate_printers.test && \
-	$(RM) src/xml/printers/check_duplicate_printers.test && \
-	echo '#!/bin/sh' > src/xml/printers/check_duplicate_printers.test && \
-	echo 'exec $(HOST_BUILD_DIR)/src/xml/printers/check_duplicate_printers.test  "$$$$@" ' \
-	>> src/xml/printers/check_duplicate_printers.test && chmod +x src/xml/printers/check_duplicate_printers.test && cp src/xml/printers/check_duplicate_printers.test /tmp/)
+	(cd $(PKG_BUILD_DIR) && $(MAKE) -C src/xml extract-strings && \
+	$(RM) src/xml/extract-strings && \
+	echo '#!/bin/sh' > src/xml/extract-strings && \
+	echo 'exec $(HOST_BUILD_DIR)/src/xml/extract-strings  "$$$$@" ' \
+	>> src/xml/extract-strings && chmod +x src/xml/extract-strings && cp src/xml/extract-strings /tmp/)
 	$(call Build/Compile/Default)
 endef
 
