@@ -68,11 +68,11 @@ CONFIGURE_ARGS+= \
 define Build/Compile
 	# Replace the cross-compiled "extract-string" by a shell-script that
 	# runs the host's own compiled version (gutenprint needs to run this)
-	(cd $(PKG_BUILD_DIR) && $(MAKE) -C src/xml extract-strings && \
-	$(RM) src/xml/extract-strings && \
-	echo '#!/bin/sh' > src/xml/extract-strings && \
-	echo 'exec $(HOST_BUILD_DIR)/src/xml/extract-strings  "$$$$@" ' \
-	>> src/xml/extract-strings && chmod +x src/xml/extract-strings && cp src/xml/extract-strings /tmp/)
+	(cd $(PKG_BUILD_DIR) && $(MAKE) -C src/printers check_duplicate_printers.test && \
+	$(RM) src/xml/printers/check_duplicate_printers.test && \
+	echo '#!/bin/sh' > src/xml/printers/check_duplicate_printers.test && \
+	echo 'exec $(HOST_BUILD_DIR)/src/xml/printers/check_duplicate_printers.test  "$$$$@" ' \
+	>> src/xml/printers/check_duplicate_printers.test && chmod +x src/xml/printers/check_duplicate_printers.test && cp src/xml/printers/check_duplicate_printers.test /tmp/)
 	$(call Build/Compile/Default)
 endef
 
