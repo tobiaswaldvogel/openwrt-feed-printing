@@ -8,16 +8,16 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=gutenprint
-PKG_VERSION:=5.2.9
+PKG_VERSION:=5.3.4
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.bz2
 PKG_SOURCE_URL:=@SF/gimp-print
-PKG_MD5SUM:=aefbec27b96dd404d9ac9811e17d58ce
+PKG_HASH:=1734950dacc59d52036aa9f5da64dad865f1d247bb3875b09e7d6d2e21090b68
 
-#PKG_BUILD_DEPENDS:=gutenprint-cups/host cups
-#HOST_BUILD_DEPENDS:=libiconv/host
+PKG_BUILD_DEPENDS:=gutenprint/host cups
 PKG_INSTALL:=1
+PKG_FIXUP=autoreconf
 
 include $(INCLUDE_DIR)/host-build.mk
 include $(INCLUDE_DIR)/package.mk
@@ -56,7 +56,6 @@ CONFIGURE_ARGS+= \
 	--without-foomatic \
 	--without-foomatic3 \
 	--enable-escputil=no \
-	--enable-test=no \
 	--disable-translated-cups-ppds \
 	--disable-globalized-cups-ppds \
 	--enable-simplified-cups-ppds \
@@ -65,14 +64,10 @@ CONFIGURE_ARGS+= \
 	--prefix=/usr \
 	--exec-prefix=/usr
 
+# Patch the Makefiles to run the binary from host compile
 define Build/Compile
-	# Replace the cross-compiled "extract-string" by a shell-script that
-	# runs the host's own compiled version (gutenprint needs to run this)
-	(cd $(PKG_BUILD_DIR) && $(MAKE) -C src/xml extract-strings && \
-	$(RM) src/xml/extract-strings && \
-	echo '#!/bin/sh' > src/xml/extract-strings && \
-	echo 'exec $(HOST_BUILD_DIR)/src/xml/extract-strings  "$$$$@" ' \
-	>> src/xml/extract-strings && chmod +x src/xml/extract-strings && cp src/xml/extract-strings /tmp/)
+	$(SED) "s#\.\(/extract-strings\)#$(HOST_BUILD_DIR)/src/xml\1#" $(PKG_BUILD_DIR)/src/xml/Makefile
+	$(SED) "s#\.\(/check_duplicate_printers.test\)#$(HOST_BUILD_DIR)/src/xml/printers\1#" $(PKG_BUILD_DIR)/src/xml/printers/Makefile
 	$(call Build/Compile/Default)
 endef
 
@@ -93,7 +88,8 @@ define Package/gutenprint-cups/install
 endef
 
 define Host/Compile
-  $(MAKE) $(HOST_JOBS) -C $(HOST_BUILD_DIR)/src/xml $(HOST_MAKE_FLAGS) extract-strings
+	$(MAKE) $(HOST_JOBS) -C $(HOST_BUILD_DIR)/src/xml $(HOST_MAKE_FLAGS) extract-strings
+	$(MAKE) $(HOST_JOBS) -C $(HOST_BUILD_DIR)/src/xml/printers $(HOST_MAKE_FLAGS) check_duplicate_printers.test
 endef
 
 define Host/Install
