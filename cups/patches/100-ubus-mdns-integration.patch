@@ -1,6 +1,56 @@
 Add mdns support via ubus and umdns daemon
 
 Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
+--- a/scheduler/printers.h
++++ b/scheduler/printers.h
+@@ -43,6 +43,13 @@
+ #elif defined(HAVE_AVAHI)
+ typedef AvahiEntryGroup *cupsd_srv_t;	/* Service reference */
+ typedef AvahiStringList *cupsd_txt_t;	/* TXT record */
++
++#elif defined(HAVE_UBUS)
++#include <libubox/blob.h>
++
++typedef char*                   cupsd_srv_t;	/* Service reference */
++typedef struct blob_buf         cupsd_txt_t;  /* TXT record */
++
+ #endif /* HAVE_MDNSRESPONDER */
+ 
+ 
+@@ -114,11 +121,11 @@
+   time_t	marker_time;		/* Last time marker attributes were updated */
+   _ppd_cache_t	*pc;			/* PPD cache and mapping data */
+ 
+-#ifdef HAVE_DNSSD
++#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
+   char		*reg_name,		/* Name used for service registration */
+ 		*pdl;			/* pdl value for TXT record */
+   cupsd_srv_t	ipp_srv;		/* IPP service(s) */
+-#  ifdef HAVE_MDNSRESPONDER
++#  if defined(HAVE_MDNSRESPONDER) || defined(HAVE_UBUS)
+ #    ifdef HAVE_TLS
+   cupsd_srv_t	ipps_srv;		/* IPPS service(s) */
+ #    endif /* HAVE_TLS */
+--- a/scheduler/dirsvc.h
++++ b/scheduler/dirsvc.h
+@@ -28,7 +28,7 @@
+ 			BrowseLocalProtocols
+ 					VALUE(BROWSE_ALL);
+ 					/* Protocols to support for local printers */
+-#ifdef HAVE_DNSSD
++#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
+ VAR char		*DNSSDComputerName VALUE(NULL),
+ 					/* Computer/server name */
+ 			*DNSSDHostName	VALUE(NULL),
+@@ -44,7 +44,7 @@
+ #  ifdef HAVE_MDNSRESPONDER
+ VAR DNSServiceRef	DNSSDMaster	VALUE(NULL);
+ 					/* Master DNS-SD service reference */
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+ VAR AvahiThreadedPoll	*DNSSDMaster	VALUE(NULL);
+ 					/* Master polling interface for Avahi */
+ VAR AvahiClient		*DNSSDClient	VALUE(NULL);
 --- a/scheduler/dirsvc.c
 +++ b/scheduler/dirsvc.c
 @@ -23,6 +23,18 @@
@@ -49,7 +99,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
 +/*
 + * OpenWRT ubus stuff
 + */
-+static int ubus_shutting_down = 0;
++static int ubus_running = 0;
 +static struct blob_buf b, b_set;
 +
 +static const char SERVICE_NAME[] = "cupsd";
@@ -215,7 +265,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
 +
 +  /* Don't make any ubus calls after shutdown as this would start
 +   * the service again */
-+  if (ubus_shutting_down)
++  if (!ubus_running)
 +    return 0;
 +
 +  uloop_init();
@@ -246,16 +296,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  
  /*
   * 'cupsdDeregisterPrinter()' - Stop sending broadcast information for a
-@@ -139,6 +350,8 @@
- void
- cupsdStartBrowsing(void)
- {
-+  cupsdLogMessage(CUPSD_LOG_DEBUG2, "cupsdStartBrowsing enter");
-+
-   if (!Browsing || !BrowseLocalProtocols)
-     return;
- 
-@@ -181,7 +394,7 @@
+@@ -181,7 +392,7 @@
      DNSSDPort = 0;
      cupsdUpdateDNSSDName();
  
@@ -264,13 +305,15 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
      if ((DNSSDMaster = avahi_threaded_poll_new()) == NULL)
      {
        cupsdLogMessage(CUPSD_LOG_ERROR, "Unable to create DNS-SD thread.");
-@@ -210,6 +423,10 @@
+@@ -210,6 +421,12 @@
        else
  	avahi_threaded_poll_start(DNSSDMaster);
      }
 +
 +#  elif defined(HAVE_UBUS)
-+  ubus_shutting_down = 0;
++  ubus_running = 1;
++  DNSSDPort = 0;
++  dnssdUpdateDNSSDName(0);
 +  
  #  endif /* HAVE_MDNSRESPONDER */
    }
@@ -280,25 +323,13 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  
  #ifdef HAVE_DNSSD
 +#ifdef HAVE_UBUS
-+  ubus_shutting_down = 1;
++  ubus_running = 0;
 +#endif
 +
   /*
    * De-register the individual printers
    */
-@@ -325,6 +546,11 @@
-   const char    *admin_scheme = "http"; /* Admin page URL scheme */
-   ipp_attribute_t *urf_supported;	/* urf-supported attribute */
- 
-+  if (!DNSSDHostName) {
-+    DNSSDPort = 0;
-+    cupsdUpdateDNSSDName();
-+  }
-+
-  /*
-   * Load up the key value pairs...
-   */
-@@ -400,7 +626,11 @@
+@@ -400,7 +621,11 @@
    keyvalue[count++][1] = p->pc && p->pc->product ? p->pc->product : "Unknown";
  
    keyvalue[count  ][0] = "pdl";
@@ -311,7 +342,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  
    if (get_auth_info_required(p, air_str, sizeof(air_str)))
    {
-@@ -525,10 +755,26 @@
+@@ -525,10 +750,26 @@
        TXTRecordSetValue(&txt, keyvalue[i][0], (uint8_t)len, keyvalue[i][1]);
    }
  
@@ -339,7 +370,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #  endif /* HAVE_MDNSRESPONDER */
  
    return (txt);
-@@ -681,7 +927,7 @@
+@@ -681,7 +922,7 @@
  
    *srv = NULL;
  
@@ -348,7 +379,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
    if (!from_callback)
      avahi_threaded_poll_lock(DNSSDMaster);
  
-@@ -693,6 +939,19 @@
+@@ -693,6 +934,19 @@
  
    if (!from_callback)
      avahi_threaded_poll_unlock(DNSSDMaster);
@@ -368,7 +399,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #  endif /* HAVE_MDNSRESPONDER */
  }
  
-@@ -716,7 +975,7 @@
+@@ -716,7 +970,7 @@
    {
      dnssdDeregisterInstance(&p->ipp_srv, from_callback);
  
@@ -377,7 +408,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #    ifdef HAVE_TLS
      dnssdDeregisterInstance(&p->ipps_srv, from_callback);
  #    endif /* HAVE_TLS */
-@@ -848,8 +1107,27 @@
+@@ -848,8 +1102,27 @@
          return ("Service timeout.");
    }
  
@@ -406,7 +437,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #  endif /* HAVE_MDNSRESPONDER */
  }
  
-@@ -864,9 +1142,13 @@
+@@ -864,9 +1137,13 @@
  #  ifdef HAVE_MDNSRESPONDER
    TXTRecordDeallocate(txt);
  
@@ -421,7 +452,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #  endif /* HAVE_MDNSRESPONDER */
  }
  
-@@ -938,7 +1220,7 @@
+@@ -938,7 +1215,7 @@
    }
  }
  
@@ -430,7 +461,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  static void
  dnssdRegisterCallback(
      AvahiEntryGroup      *srv,		/* I - Service */
-@@ -956,6 +1238,7 @@
+@@ -956,6 +1233,7 @@
  
    /* TODO: Handle collisions with avahi_alternate_service_name(p->reg_name)? */
  }
@@ -438,7 +469,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
  #  endif /* HAVE_MDNSRESPONDER */
  
  
-@@ -992,7 +1275,7 @@
+@@ -992,7 +1270,7 @@
      * Assign the correct pointer for "srv"...
      */
  
@@ -447,7 +478,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
      if (!strcmp(type, "_printer._tcp"))
        srv = &p->printer_srv;		/* Target LPD service */
  #    ifdef HAVE_TLS
-@@ -1002,7 +1285,7 @@
+@@ -1002,7 +1280,7 @@
      else
        srv = &p->ipp_srv;		/* Target IPP service */
  
@@ -456,7 +487,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
      srv = &p->ipp_srv;			/* Target service group */
  #  endif /* HAVE_MDNSRESPONDER */
    }
-@@ -1010,7 +1293,7 @@
+@@ -1010,7 +1288,7 @@
  #  ifdef HAVE_MDNSRESPONDER
    (void)commit;
  
@@ -465,7 +496,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
    if (!from_callback)
      avahi_threaded_poll_lock(DNSSDMaster);
  
-@@ -1062,7 +1345,7 @@
+@@ -1062,7 +1340,7 @@
  			     txt ? TXTRecordGetBytesPtr(txt) : NULL,
  			     dnssdRegisterCallback, p);
  
@@ -474,7 +505,7 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
    if (txt)
    {
      AvahiStringList *temptxt;
-@@ -1138,8 +1421,35 @@
+@@ -1138,8 +1416,35 @@
  
    if (!from_callback)
      avahi_threaded_poll_unlock(DNSSDMaster);
@@ -510,7 +541,49 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
    if (error)
    {
      cupsdLogMessage(CUPSD_LOG_WARN, "DNS-SD registration of \"%s\" failed: %s",
-@@ -1297,7 +1607,7 @@
+@@ -1176,6 +1481,11 @@
+     return;
+ #  endif /* HAVE_AVAHI */
+ 
++# ifdef HAVE_UBUS
++  if (!ubus_running)
++    return;
++# endif /* HAVE_UBUS */
++
+  /*
+   * Remove the current registrations if we have them and then return if
+   * per-printer sharing was just disabled...
+@@ -1188,20 +1498,24 @@
+ 
+  /*
+   * Set the registered name as needed; the registered name takes the form of
++  * "<printer-info> @ <location>"...  if location is set, otherwise
+   * "<printer-info> @ <computer name>"...
+   */
+ 
+   if (!p->reg_name)
+   {
++    const char* location = p && p->location && strlen(p->location) > 0 ?
++                           p->location : DNSSDComputerName;
++
+     if (p->info && strlen(p->info) > 0)
+     {
+-      if (DNSSDComputerName)
+-	snprintf(name, sizeof(name), "%s @ %s", p->info, DNSSDComputerName);
++      if (location)
++        snprintf(name, sizeof(name), "%s @ %s", p->info, location);
+       else
+-	strlcpy(name, p->info, sizeof(name));
++        strlcpy(name, p->info, sizeof(name));
+     }
+-    else if (DNSSDComputerName)
+-      snprintf(name, sizeof(name), "%s @ %s", p->name, DNSSDComputerName);
++    else if (location)
++      snprintf(name, sizeof(name), "%s @ %s", p->name, location);
+     else
+       strlcpy(name, p->name, sizeof(name));
+   }
+@@ -1297,7 +1611,7 @@
    DNSServiceRefDeallocate(DNSSDMaster);
    DNSSDMaster = NULL;
  
@@ -519,53 +592,3 @@ Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
    if (DNSSDMaster)
      avahi_threaded_poll_stop(DNSSDMaster);
  
---- a/scheduler/dirsvc.h
-+++ b/scheduler/dirsvc.h
-@@ -28,7 +28,7 @@
- 			BrowseLocalProtocols
- 					VALUE(BROWSE_ALL);
- 					/* Protocols to support for local printers */
--#ifdef HAVE_DNSSD
-+#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
- VAR char		*DNSSDComputerName VALUE(NULL),
- 					/* Computer/server name */
- 			*DNSSDHostName	VALUE(NULL),
-@@ -44,7 +44,7 @@
- #  ifdef HAVE_MDNSRESPONDER
- VAR DNSServiceRef	DNSSDMaster	VALUE(NULL);
- 					/* Master DNS-SD service reference */
--#  else /* HAVE_AVAHI */
-+#  elif defined(HAVE_AVAHI)
- VAR AvahiThreadedPoll	*DNSSDMaster	VALUE(NULL);
- 					/* Master polling interface for Avahi */
- VAR AvahiClient		*DNSSDClient	VALUE(NULL);
---- a/scheduler/printers.h
-+++ b/scheduler/printers.h
-@@ -43,6 +43,13 @@
- #elif defined(HAVE_AVAHI)
- typedef AvahiEntryGroup *cupsd_srv_t;	/* Service reference */
- typedef AvahiStringList *cupsd_txt_t;	/* TXT record */
-+
-+#elif defined(HAVE_UBUS)
-+#include <libubox/blob.h>
-+
-+typedef char*                   cupsd_srv_t;	/* Service reference */
-+typedef struct blob_buf         cupsd_txt_t;  /* TXT record */
-+
- #endif /* HAVE_MDNSRESPONDER */
- 
- 
-@@ -114,11 +121,11 @@
-   time_t	marker_time;		/* Last time marker attributes were updated */
-   _ppd_cache_t	*pc;			/* PPD cache and mapping data */
- 
--#ifdef HAVE_DNSSD
-+#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
-   char		*reg_name,		/* Name used for service registration */
- 		*pdl;			/* pdl value for TXT record */
-   cupsd_srv_t	ipp_srv;		/* IPP service(s) */
--#  ifdef HAVE_MDNSRESPONDER
-+#  if defined(HAVE_MDNSRESPONDER) || defined(HAVE_UBUS)
- #    ifdef HAVE_TLS
-   cupsd_srv_t	ipps_srv;		/* IPPS service(s) */
- #    endif /* HAVE_TLS */
