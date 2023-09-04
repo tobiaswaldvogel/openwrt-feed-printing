@@ -165,7 +165,7 @@ void write_br_config(ppd_file_t *ppd, cups_page_header2_t header,
    write_br_option(rcfilefd, ppd, "BRGreen", "GreenKey", 0, "0,");
    write_br_option(rcfilefd, ppd, "BRBlue", "BlueKey", 0, "0");
 
-   write_br_option(rcfilefd, ppd, "MediaType", 0, 0, "Plan");
+   write_br_option(rcfilefd, ppd, "MediaType", 0, 0, "Plain");
    write_br_option(rcfilefd, ppd, "Copies", 0, 0, "1");
    write_br_option(rcfilefd, ppd, "Collate", 0, 0, "OFF");
    write_br_option(rcfilefd, ppd, "TonerSaveMode", "TonerSaveMode", 0, "OFF");
@@ -208,7 +208,8 @@ int main(int argc, char *argv[])
 
     char            magic;
 
-    ssize_t         bytes_read, bytes_written = 0;
+    unsigned        bytes_read;
+    ssize_t         bytes_written = 0;
     size_t          line_in_len = 0, line_out_len = 0;
     unsigned char   *line_in = 0, *line_out = 0, data, val;
     unsigned int    line, pos_out, pos_in, x, len;
@@ -299,10 +300,10 @@ int main(int argc, char *argv[])
             line_in = malloc(line_in_len);
         }
 
-        fprintf(stderr, "NOTICE: " PACKAGE ": page %d, colorspace %d, %d bits, dimensions %d x %d\n",
+        fprintf(stderr, "NOTICE: " PACKAGE ": page %d, colorspace %d, %d bits, dimensions %d x %d, bytesPerLine %d\n",
                 pages + 1,
                 header.cupsColorSpace, header.cupsBitsPerColor,
-                header.cupsWidth, header.cupsHeight);
+                header.cupsWidth, header.cupsHeight, header.cupsBytesPerLine);
 
         if (header.cupsBitsPerColor != 1 && header.cupsBitsPerColor != 8) {
             fprintf(stderr, "ERROR: " PACKAGE ": Unsupported bitsPerColor %d\n", header.cupsBitsPerColor);
@@ -329,12 +330,11 @@ int main(int argc, char *argv[])
             break;
         }
 
-        pos_out = 0;
-
         for (line = 0; !interrupted && line < header.cupsHeight; line++) {
             bytes_read = cupsRasterReadPixels(ras, line_in, header.cupsBytesPerLine);
+
             if (bytes_read <= 0) {
-                fprintf(stderr, "ERROR: " PACKAGE ": failed to read raster data %ld", bytes_read);
+                fprintf(stderr, "ERROR: " PACKAGE ": failed to read raster data %d, at line %d of %d (%d)\n", bytes_read, line, header.cupsHeight, errno);
                 interrupted = 1;
                 break;
             }
@@ -342,9 +342,7 @@ int main(int argc, char *argv[])
             if (header.cupsColorSpace == CUPS_CSPACE_RGB || header.cupsColorSpace == CUPS_CSPACE_SRGB) {
                 /* For RGB 8 Bit just copy */
                 bytes_written = write(pfd[1], line_in, header.cupsBytesPerLine);
-                if (bytes_written < 0)
-                    break;
-
+                
             } else {
                 /* Make sure line_out is big enough
                  * PPM >= header.cupsWidth * 3 (RGB) */
@@ -359,6 +357,7 @@ int main(int argc, char *argv[])
                 }
 
                 pos_in = 0;
+                pos_out = 0;
                 data = 0;
                 
                 for (x = 0; x < header.cupsWidth; x++) {
@@ -377,17 +376,15 @@ int main(int argc, char *argv[])
                     line_out[pos_out++] = val;
                     line_out[pos_out++] = val;
                 }
+
                 bytes_written = write(pfd[1], line_out, pos_out);
-                if (bytes_written < 0)
-                    break;
-
             }
-        }
 
-        if (bytes_written < 0) {
-            fprintf(stderr, "ERROR: " PACKAGE ": failed to write to pipe (%d:%s)\n",
+            if (bytes_written < 0) {
+                fprintf(stderr, "ERROR: " PACKAGE ": failed to write to pipe (%d:%s)\n",
                             errno, strerror(errno));
-            break;
+                interrupted = 1;
+            }
         }
 
         if (interrupted)
@@ -406,9 +403,9 @@ int main(int argc, char *argv[])
 
     if (pid) {
         close(pfd[1]);
-        fprintf(stderr, "NOTICE: " PACKAGE ": Waiting for printer driver (%d)\n", pid);
+        fprintf(stderr, "NOTICE: " PACKAGE ": Waiting for printer driver (pid %d)\n", pid);
         waitpid(pid, &stat_loc, 0);
-        fprintf(stderr, "NOTICE: " PACKAGE ": Printer driver finished (%d)\n", pid);
+        fprintf(stderr, "NOTICE: " PACKAGE ": Printer driver finished (pid %d)\n", pid);
     }
 
     if (line_out)
