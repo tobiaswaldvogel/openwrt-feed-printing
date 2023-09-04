@@ -4,8 +4,6 @@
 # This is free software, licensed under the GNU General Public License v2.
 # See /LICENSE for more information.
 #
-#--with-local_protocols='dnssd' \
-
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=cups
@@ -33,7 +31,7 @@ define Package/cups
 $(call Package/cups/Default)
   SECTION:=net
   CATEGORY:=Network
-  DEPENDS:=+libcups +libusb-1.0 +libstdcpp
+  DEPENDS:=+libcups +libusb-1.0 +libstdcpp +libubox +libubus +umdns
   TITLE:=Common UNIX Printing System (daemon)
 endef
 
@@ -79,7 +77,7 @@ define Package/libcups
 $(call Package/cups/Default)
   SECTION:=libs
   CATEGORY:=Libraries
-  DEPENDS:=+zlib +libpthread +libpng +libjpeg
+  DEPENDS:=+zlib +libpthread +libpng +libjpeg +libubox +libubus
   TITLE:=Common UNIX Printing System - Core library
 endef
 
@@ -99,7 +97,6 @@ define Package/libcupsimage/description
 	Common UNIX Printing System - Image library
 endef
 
-
 CONFIGURE_ARGS += \
 		--libdir=/usr/lib \
 		--with-languages= \
@@ -115,12 +112,20 @@ CONFIGURE_ARGS += \
 		--disable-acl \
 		--disable-pam \
 		--disable-gssapi \
+		--without-perl \
+		--without-python
 
 CONFIGURE_VARS += \
 		UNAME="Linux" \
-		LIBS="$(TARGET_LDFLAGS) -lz -lpng -ljpeg"
+		LIBS="$(TARGET_LDFLAGS) -lz -lpng -ljpeg -lubus -lubox"
 
-EXTRA_CFLAGS+=-Wno-sign-conversion
+MAKE_VARS += \
+		STRIPPROG="/bin/true" \
+		CHMODPROG="/bin/true" \
+		CHGRPPROG="/bin/true" \
+		CHOWNPROG="/bin/true"
+
+EXTRA_CFLAGS+=-Wno-sign-conversion -DHAVE_UBUS
 TARGET_LDFLAGS+=-Wl,-rpath-link=$(STAGING_DIR)/usr/lib
 
 define InstallDir

@@ -1,0 +1,571 @@
+Add mdns support via ubus and umdns daemon
+
+Signed-off-by: Tobias Waldvogel <tobias.waldvogel@gmail.com>
+--- a/scheduler/dirsvc.c
++++ b/scheduler/dirsvc.c
+@@ -23,6 +23,18 @@
+ #endif /* HAVE_MDNSRESPONDER && __APPLE__ */
+ 
+ 
++#ifdef HAVE_UBUS
++#include <libubus.h>
++#include <libubox/vlist.h>
++#include <libubox/uloop.h>
++#include <libubox/blob.h>
++
++#ifndef HAVE_DNSSD
++#define HAVE_DNSSD
++#endif
++
++#endif /* HAVE_UBUS */
++
+ /*
+  * Local globals...
+  */
+@@ -31,7 +43,6 @@
+ static int	avahi_running = 0;
+ #endif /* HAVE_AVAHI */
+ 
+-
+ /*
+  * Local functions...
+  */
+@@ -61,7 +72,7 @@
+ 					      const char *regtype,
+ 					      const char *domain,
+ 					      void *context);
+-#  else
++#  elif defined(HAVE_AVAI)
+ static void		dnssdRegisterCallback(AvahiEntryGroup *p,
+ 					      AvahiEntryGroupState state,
+ 					      void *context);
+@@ -75,6 +86,206 @@
+ static void		dnssdUpdateDNSSDName(int from_callback);
+ #endif /* HAVE_DNSSD */
+ 
++#ifdef HAVE_UBUS
++#define HAVE_DNSSD
++#define DNSSDMaster 1
++/*
++ * OpenWRT ubus stuff
++ */
++static int ubus_shutting_down = 0;
++static struct blob_buf b, b_set;
++
++static const char SERVICE_NAME[] = "cupsd";
++
++static void _ubus_dump_attr(struct blob_attr *attr, int level) {
++  static const char* UBOX_TYPE[] = {
++    "Unspecified",
++    "Array",
++    "Table",
++    "String",
++    "I64",
++    "I32",
++    "I16",
++    "I8",
++    "Double"
++  };
++
++  char intent[64];
++  size_t pos;
++  int t = blobmsg_type(attr);
++  const char *t_str = t == BLOBMSG_TYPE_STRING ? blobmsg_get_string(attr) : t >= sizeof(UBOX_TYPE)/sizeof(UBOX_TYPE[0]) ? UBOX_TYPE[0] : UBOX_TYPE[t];
++  const char *name = blobmsg_name(attr);
++
++  for (pos = 0; pos < level * 4; intent[pos++] = ' ');
++  intent[pos] = 0;
++
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "%s%s %s (%d) %d", intent, name, t_str, t, blob_is_extended(attr));
++
++  if (t == BLOBMSG_TYPE_TABLE || t == BLOBMSG_TYPE_ARRAY || t == BLOBMSG_TYPE_UNSPEC) {
++    struct blob_attr *sub_attr;
++    int rem;
++
++    blobmsg_for_each_attr(sub_attr, attr, rem) {
++      _ubus_dump_attr(sub_attr, level + 1);
++    }
++  }
++}
++
++void ubus_dump_msg(struct blob_attr *msg) {
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "----------------------------------------------------------");
++  _ubus_dump_attr(msg, 0);
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "----------------------------------------------------------");
++}
++
++struct ubus_register_ctx {
++    struct ubus_context  *uctx;      /* ubox context */
++    uint32_t             id_service; /* id for calling 'service' */
++    int                  add;        /* add or remove */
++    char                 *instance;  /* Instance */
++    const char           *type;      /* DNS-SD service type */
++    char                 *name;      /* DNS-SD service name */
++    int                  port;       /* Port number or 0 */
++    cupsd_txt_t          *txt;       /* TXT record */
++};
++
++static void
++service_set_cb(struct ubus_request *req, int type, struct blob_attr *msg)
++{
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "service_set_cb");
++}
++
++static void
++service_register_cb(struct ubus_request *req, int type, struct blob_attr *msg)
++{
++  void *tbl_instances, *tbl_inst, *tbl_data, *tbl_mdns, *tbl_mdns_item;
++  struct blob_attr *srv, *instances, *inst, *attr;
++  struct blob_attr *data, *data_item;
++  struct blob_attr *mdns, *mdns_item;
++  int rem1, rem2;
++
++  struct ubus_register_ctx *ctx = req->priv;
++
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "service_register_cb");
++
++  srv = blobmsg_data(msg);
++  if (strcmp(blobmsg_name(srv), SERVICE_NAME))
++    return;
++
++  instances = blobmsg_data(srv);
++  if (strcmp(blobmsg_name(instances), "instances"))
++    return;
++
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "got instances");
++
++  blob_buf_init(&b_set, 0);
++  blobmsg_add_string(&b_set, "name", SERVICE_NAME);
++
++  tbl_instances = blobmsg_open_table(&b_set, "instances");
++  blobmsg_for_each_attr(inst, instances, rem1) {
++    tbl_inst = blobmsg_open_table(&b_set, blobmsg_name(inst));
++    data = 0;
++    /* Instance attributes */
++    blobmsg_for_each_attr(attr, inst, rem2) {
++      if (0 == strcmp(blobmsg_name(attr), "data"))
++        data = attr;
++      else if (0 == strcmp(blobmsg_name(attr), "respawn")) {
++        /* Workaround for different definition in procd */
++        int threshold = 3600, timeout = 5, retry = 5;
++        struct blob_attr *respawn;
++        int rem3;
++        void *tbl;
++
++        blobmsg_for_each_attr(respawn, attr, rem3) {
++          if (0 == strcmp("threshold", blobmsg_name(respawn)))
++            threshold = blobmsg_get_u32(respawn);
++          else if (0 == strcmp("timeout", blobmsg_name(respawn)))
++            timeout = blobmsg_get_u32(respawn);
++          else if (0 == strcmp("rety", blobmsg_name(respawn)))
++            retry = blobmsg_get_u32(respawn);
++        }
++
++        tbl = blobmsg_open_array(&b_set, "respawn");
++        blobmsg_printf(&b_set, NULL, "%d", threshold);
++        blobmsg_printf(&b_set, NULL, "%d", timeout);
++        blobmsg_printf(&b_set, NULL, "%d", retry);
++        blobmsg_close_array(&b_set, tbl);
++
++      } else
++        blobmsg_add_blob(&b_set, attr);
++    }
++
++    tbl_data = blobmsg_open_table(&b_set, "data");
++    mdns = 0;
++    /* Data */
++    blobmsg_for_each_attr(data_item, data, rem2) {
++      if (0 == strcmp(blobmsg_name(data_item), "mdns"))
++        mdns = data_item;
++      else
++        blobmsg_add_blob(&b_set, data_item);
++    }
++  
++    /* mdns */
++    tbl_mdns = blobmsg_open_table(&b_set, "mdns");
++    /* Filter out this service */
++    blobmsg_for_each_attr(mdns_item, mdns, rem2)
++      if(strcmp(ctx->instance, blobmsg_name(mdns_item)))
++        blobmsg_add_blob(&b_set, mdns_item);
++
++    if (ctx->add) {
++      tbl_mdns_item = blobmsg_open_table(&b_set, ctx->instance);
++      blobmsg_printf(&b_set, "service", "%s.local", ctx->type);
++      blobmsg_add_string(&b_set, "instance", ctx->name);
++      blobmsg_add_u32(&b_set, "port", ctx->port);
++      blobmsg_add_u32(&b_set, "timeout_lookup", -1);
++      if (ctx->txt)
++        blobmsg_add_blob(&b_set, blobmsg_data(ctx->txt->head));
++      blobmsg_close_table(&b_set, tbl_mdns_item);
++    }
++
++    blobmsg_close_table(&b_set, tbl_mdns);
++    blobmsg_close_table(&b_set, tbl_data);
++    blobmsg_close_table(&b_set, tbl_inst);
++  }
++  blobmsg_close_table(&b_set, tbl_instances);
++
++  ubus_invoke(ctx->uctx, ctx->id_service, "set", b_set.head, service_set_cb, &ctx, 5 * 1000);
++}
++
++
++static int ubus_register_service(struct ubus_register_ctx *ctx) {
++  const char *ubus_socket = NULL;
++  int rc = 0;
++
++  /* Don't make any ubus calls after shutdown as this would start
++   * the service again */
++  if (ubus_shutting_down)
++    return 0;
++
++  uloop_init();
++
++  ctx->uctx = ubus_connect(ubus_socket);
++  if (!ctx->uctx) {
++    cupsdLogMessage(CUPSD_LOG_DEBUG2, "Failed to connect to ubus");
++    return 1;
++  }
++
++  ubus_add_uloop(ctx->uctx);
++
++  /* Use service.list to ,get the current definition */
++  blob_buf_init(&b, 0);
++  if (ubus_lookup_id(ctx->uctx, "service", &(ctx->id_service)))
++    rc = 2;
++  else {
++    blobmsg_add_string(&b, "name", SERVICE_NAME);
++    ubus_invoke(ctx->uctx, ctx->id_service, "list", b.head, service_register_cb, ctx, 5 * 1000);
++  }
++
++  ubus_free(ctx->uctx);
++  uloop_done();
++  return rc;
++}
++
++#endif
+ 
+ /*
+  * 'cupsdDeregisterPrinter()' - Stop sending broadcast information for a
+@@ -139,6 +350,8 @@
+ void
+ cupsdStartBrowsing(void)
+ {
++  cupsdLogMessage(CUPSD_LOG_DEBUG2, "cupsdStartBrowsing enter");
++
+   if (!Browsing || !BrowseLocalProtocols)
+     return;
+ 
+@@ -181,7 +394,7 @@
+     DNSSDPort = 0;
+     cupsdUpdateDNSSDName();
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+     if ((DNSSDMaster = avahi_threaded_poll_new()) == NULL)
+     {
+       cupsdLogMessage(CUPSD_LOG_ERROR, "Unable to create DNS-SD thread.");
+@@ -210,6 +423,10 @@
+       else
+ 	avahi_threaded_poll_start(DNSSDMaster);
+     }
++
++#  elif defined(HAVE_UBUS)
++  ubus_shutting_down = 0;
++  
+ #  endif /* HAVE_MDNSRESPONDER */
+   }
+ 
+@@ -233,6 +450,10 @@
+     return;
+ 
+ #ifdef HAVE_DNSSD
++#ifdef HAVE_UBUS
++  ubus_shutting_down = 1;
++#endif
++
+  /*
+   * De-register the individual printers
+   */
+@@ -325,6 +546,11 @@
+   const char    *admin_scheme = "http"; /* Admin page URL scheme */
+   ipp_attribute_t *urf_supported;	/* urf-supported attribute */
+ 
++  if (!DNSSDHostName) {
++    DNSSDPort = 0;
++    cupsdUpdateDNSSDName();
++  }
++
+  /*
+   * Load up the key value pairs...
+   */
+@@ -400,7 +626,11 @@
+   keyvalue[count++][1] = p->pc && p->pc->product ? p->pc->product : "Unknown";
+ 
+   keyvalue[count  ][0] = "pdl";
+-  keyvalue[count++][1] = p->pdl ? p->pdl : "application/postscript";
++  keyvalue[count++][1] = p->pdl ? p->pdl : 
++                            "application/octet-stream,"
++                            "application/pdf,"
++                            "application/postscript,"
++                            "image/jpeg,image/png,image/pwg-raster";
+ 
+   if (get_auth_info_required(p, air_str, sizeof(air_str)))
+   {
+@@ -525,10 +755,26 @@
+       TXTRecordSetValue(&txt, keyvalue[i][0], (uint8_t)len, keyvalue[i][1]);
+   }
+ 
+-#  else
++#  elif defined(HAVE_AVAHI)
+   for (i = 0, txt = NULL; i < count; i ++)
+     txt = avahi_string_list_add_printf(txt, "%s=%s", keyvalue[i][0],
+                                        keyvalue[i][1]);
++
++#  elif defined(HAVE_UBUS)
++  {
++    void *arr;
++
++    (void)lis;
++
++    memset(&txt, 0, sizeof(txt));
++    blob_buf_init(&txt, 0);
++    arr = blobmsg_open_array(&txt, "txt");
++    for (i = 0; i < count; i ++)
++      blobmsg_printf(&txt, "", "%s=%s", keyvalue[i][0], keyvalue[i][1]);
++    blobmsg_close_array(&txt, arr);
++  }
++  
++
+ #  endif /* HAVE_MDNSRESPONDER */
+ 
+   return (txt);
+@@ -681,7 +927,7 @@
+ 
+   *srv = NULL;
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   if (!from_callback)
+     avahi_threaded_poll_lock(DNSSDMaster);
+ 
+@@ -693,6 +939,19 @@
+ 
+   if (!from_callback)
+     avahi_threaded_poll_unlock(DNSSDMaster);
++
++#  elif defined(HAVE_UBUS)
++  {
++    struct ubus_register_ctx ctx;
++
++    memset(&ctx, 0, sizeof(ctx));
++    ctx.instance = *srv;
++    ubus_register_service(&ctx);
++    
++    free(*srv);
++    *srv = NULL;
++  }
++
+ #  endif /* HAVE_MDNSRESPONDER */
+ }
+ 
+@@ -716,7 +975,7 @@
+   {
+     dnssdDeregisterInstance(&p->ipp_srv, from_callback);
+ 
+-#  ifdef HAVE_MDNSRESPONDER
++#  if defined(HAVE_MDNSRESPONDER) || defined(HAVE_UBUS)
+ #    ifdef HAVE_TLS
+     dnssdDeregisterInstance(&p->ipps_srv, from_callback);
+ #    endif /* HAVE_TLS */
+@@ -848,8 +1107,27 @@
+         return ("Service timeout.");
+   }
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   return (avahi_strerror(error));
++
++#  elif defined(HAVE_UBUS)
++  switch (error)
++  {
++    case 0 :
++        return ("OK.");
++
++    case 1:
++      return ("Failed to connect to ubus");
++
++    case 2:
++      return ("UBUS object service does not exist");
++
++    default :
++        return ("Unknown error.");
++  }
++
++#  else
++  return strerror(error);
+ #  endif /* HAVE_MDNSRESPONDER */
+ }
+ 
+@@ -864,9 +1142,13 @@
+ #  ifdef HAVE_MDNSRESPONDER
+   TXTRecordDeallocate(txt);
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   avahi_string_list_free(*txt);
+   *txt = NULL;
++
++#  elif defined(HAVE_UBUS)
++  blob_buf_free(txt);
++
+ #  endif /* HAVE_MDNSRESPONDER */
+ }
+ 
+@@ -938,7 +1220,7 @@
+   }
+ }
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+ static void
+ dnssdRegisterCallback(
+     AvahiEntryGroup      *srv,		/* I - Service */
+@@ -956,6 +1238,7 @@
+ 
+   /* TODO: Handle collisions with avahi_alternate_service_name(p->reg_name)? */
+ }
++
+ #  endif /* HAVE_MDNSRESPONDER */
+ 
+ 
+@@ -992,7 +1275,7 @@
+     * Assign the correct pointer for "srv"...
+     */
+ 
+-#  ifdef HAVE_MDNSRESPONDER
++#  if defined(HAVE_MDNSRESPONDER) || defined(HAVE_UBUS)
+     if (!strcmp(type, "_printer._tcp"))
+       srv = &p->printer_srv;		/* Target LPD service */
+ #    ifdef HAVE_TLS
+@@ -1002,7 +1285,7 @@
+     else
+       srv = &p->ipp_srv;		/* Target IPP service */
+ 
+-#  else /* HAVE_AVAHI */
++#  else
+     srv = &p->ipp_srv;			/* Target service group */
+ #  endif /* HAVE_MDNSRESPONDER */
+   }
+@@ -1010,7 +1293,7 @@
+ #  ifdef HAVE_MDNSRESPONDER
+   (void)commit;
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   if (!from_callback)
+     avahi_threaded_poll_lock(DNSSDMaster);
+ 
+@@ -1062,7 +1345,7 @@
+ 			     txt ? TXTRecordGetBytesPtr(txt) : NULL,
+ 			     dnssdRegisterCallback, p);
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   if (txt)
+   {
+     AvahiStringList *temptxt;
+@@ -1138,8 +1421,35 @@
+ 
+   if (!from_callback)
+     avahi_threaded_poll_unlock(DNSSDMaster);
++
++#  elif defined(HAVE_UBUS)
++
++  {
++    struct ubus_register_ctx ctx;
++
++    snprintf(temp, sizeof(temp), "%s.%s", p ? p->name : "webif", type);
++    for (ptr = temp; *ptr; ptr++)
++      *ptr = tolower(*ptr);
++
++    *srv = strdup(temp);
++
++    /* umdns has a problem with '.' in the instance name */
++    for (ptr = name; *ptr; ptr++)
++      if (*ptr == '.')
++        *ptr = 0;
++    
++    ctx.add      = 1;
++    ctx.instance = *srv;
++    ctx.type     = type;
++    ctx.name     = name;
++    ctx.port     = port;
++    ctx.txt      = txt;
++    error = ubus_register_service(&ctx);
++  }
++
+ #  endif /* HAVE_MDNSRESPONDER */
+ 
++
+   if (error)
+   {
+     cupsdLogMessage(CUPSD_LOG_WARN, "DNS-SD registration of \"%s\" failed: %s",
+@@ -1297,7 +1607,7 @@
+   DNSServiceRefDeallocate(DNSSDMaster);
+   DNSSDMaster = NULL;
+ 
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+   if (DNSSDMaster)
+     avahi_threaded_poll_stop(DNSSDMaster);
+ 
+--- a/scheduler/dirsvc.h
++++ b/scheduler/dirsvc.h
+@@ -28,7 +28,7 @@
+ 			BrowseLocalProtocols
+ 					VALUE(BROWSE_ALL);
+ 					/* Protocols to support for local printers */
+-#ifdef HAVE_DNSSD
++#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
+ VAR char		*DNSSDComputerName VALUE(NULL),
+ 					/* Computer/server name */
+ 			*DNSSDHostName	VALUE(NULL),
+@@ -44,7 +44,7 @@
+ #  ifdef HAVE_MDNSRESPONDER
+ VAR DNSServiceRef	DNSSDMaster	VALUE(NULL);
+ 					/* Master DNS-SD service reference */
+-#  else /* HAVE_AVAHI */
++#  elif defined(HAVE_AVAHI)
+ VAR AvahiThreadedPoll	*DNSSDMaster	VALUE(NULL);
+ 					/* Master polling interface for Avahi */
+ VAR AvahiClient		*DNSSDClient	VALUE(NULL);
+--- a/scheduler/printers.h
++++ b/scheduler/printers.h
+@@ -43,6 +43,13 @@
+ #elif defined(HAVE_AVAHI)
+ typedef AvahiEntryGroup *cupsd_srv_t;	/* Service reference */
+ typedef AvahiStringList *cupsd_txt_t;	/* TXT record */
++
++#elif defined(HAVE_UBUS)
++#include <libubox/blob.h>
++
++typedef char*                   cupsd_srv_t;	/* Service reference */
++typedef struct blob_buf         cupsd_txt_t;  /* TXT record */
++
+ #endif /* HAVE_MDNSRESPONDER */
+ 
+ 
+@@ -114,11 +121,11 @@
+   time_t	marker_time;		/* Last time marker attributes were updated */
+   _ppd_cache_t	*pc;			/* PPD cache and mapping data */
+ 
+-#ifdef HAVE_DNSSD
++#if defined(HAVE_DNSSD) || defined(HAVE_UBUS)
+   char		*reg_name,		/* Name used for service registration */
+ 		*pdl;			/* pdl value for TXT record */
+   cupsd_srv_t	ipp_srv;		/* IPP service(s) */
+-#  ifdef HAVE_MDNSRESPONDER
++#  if defined(HAVE_MDNSRESPONDER) || defined(HAVE_UBUS)
+ #    ifdef HAVE_TLS
+   cupsd_srv_t	ipps_srv;		/* IPPS service(s) */
+ #    endif /* HAVE_TLS */
