@@ -8,12 +8,12 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=poppler
-PKG_VERSION:=23.07.0
+PKG_VERSION:=24.04.0
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.xz
 PKG_SOURCE_URL:=http://poppler.freedesktop.org/
-PKG_HASH:=f29b4b4bf47572611176454c8f21506d71d27eca5011a39aa44038b30b957db0
+PKG_HASH:=1e804ec565acf7126eb2e9bb3b56422ab2039f7e05863a5dfabdd1ffd1bb77a7
 
 PKG_INSTALL:=1
 
@@ -34,8 +34,8 @@ define Package/libpoppler/description
 endef
 
 define Package/poppler
-  SECTION:=utils
-  CATEGORY:=Utilities
+  SECTION:=net
+  CATEGORY:=Network
   SUBMENU:=Printing
   TITLE:=Poppler PDF rendering library
   DEPENDS:=+libpoppler
@@ -50,6 +50,8 @@ CMAKE_OPTIONS += \
 	-DENABLE_BOOST:BOOL=OFF \
 	-DENABLE_QT5:BOOL=OFF \
 	-DENABLE_QT6:BOOL=OFF \
+	-DENABLE_NSS3:BOOL=OFF \
+	-DENABLE_GPGME:BOOL=OFF \
 	-DENABLE_LIBCURL:BOOL=OFF \
 	-DENABLE_GLIB:BOOL=OFF \
 	-DENABLE_LIBOPENJPEG:STRING=none \

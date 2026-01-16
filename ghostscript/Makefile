@@ -8,14 +8,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=ghostscript
-PKG_VERSION:=10.01.2
+PKG_VERSION:=10.05.1
 PKG_RELEASE:=3
 
 PKG_MAINTAINER:=Tobias Waldvogel <tobias.waldvogel@gmail.com>
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/ArtifexSoftware/ghostpdl.git
 PKG_SOURCE_VERSION:=tags/ghostpdl-$(PKG_VERSION)
-PKG_HASH:=722e6461e3b575504068dddc2a6584db15682f01bf54d28109a89fa46f0ae8c1
+PKG_HASH:=63cab56ed6c533063d6fe85964e18ed38d1eaf62ccc3ff54051fff0e6e932805
 
 PKG_FIXUP:=autoreconf
 PKG_INSTALL:=1
@@ -23,8 +23,8 @@ PKG_INSTALL:=1
 include $(INCLUDE_DIR)/package.mk
 
 define Package/ghostscript
-  SECTION:=utils
-  CATEGORY:=Utilities
+  SECTION:=net
+  CATEGORY:=Network
   TITLE:=ghostscript
   DEPENDS:=+cups +libcupsimage +libfreetype +libtiff +libjpeg +libpng +libexpat +liblcms2 +zlib +fontconfig
   SUBMENU:=Printing
@@ -79,6 +79,11 @@ CONFIGURE_ARGS += \
 CONFIGURE_VARS += \
 	PKGCONFIG=$(STAGING_DIR_HOST)/bin/pkg-config \
 	CUPSCONFIG=$(STAGING_DIR)/usr/bin/cups-config
+
+EXTRA_CFLAGS += \
+	-Wno-incompatible-pointer-types \
+	-Wno-pointer-sign \
+	--std=gnu17
 
 define Build/Prepare
 	$(call Build/Prepare/Default)

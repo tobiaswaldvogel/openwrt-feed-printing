@@ -17,7 +17,6 @@ define Package/splix
 	SECTION:=net
 	CATEGORY:=Network
 	TITLE:=SPL printer driver for Unix
-	#DESCRIPTION:=This variable is obsolete. use the Package/name/description define instead!
 	DEPENDS:=+cups +libcupsimage +libtiff +libjbigkit
 	URL:=http://pkgs.fedoraproject.org/cgit/splix.git/
   SUBMENU:=Printing

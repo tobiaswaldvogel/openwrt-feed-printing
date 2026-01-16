@@ -8,20 +8,20 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=mupdf
-PKG_VERSION:=1.20.3-source
+PKG_VERSION:=1.24.1-source
 PKG_RELEASE:=1
 
 PKG_SOURCE:=$(PKG_NAME)-$(PKG_VERSION).tar.gz
 PKG_SOURCE_URL:=https://mupdf.com/downloads/archive/
-PKG_HASH:=6b60070f6eec20e8d87d2b5cd22cf49020311a3cf15ee10998e3e5f5f984b1eb
+PKG_HASH:=5840308280a2be7bd55f5e8a0b5a3ab8839689fa389a48a91433dcabd465be4d
 PKG_INSTALL:=1
 
 include $(INCLUDE_DIR)/package.mk
 
 define Package/mupdf
   SECTION:=utils
-  CATEGORY:=Utilities
-  SUBMENU:=Printing
+  SECTION:=net
+  CATEGORY:=Network
   DEPENDS:=+libopenssl
   TITLE:=MuPDF is a lightweight PDF, XPS, and E-book viewer.
   URL:=http://www.mupdf.com

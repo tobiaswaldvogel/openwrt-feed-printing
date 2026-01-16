@@ -7,14 +7,14 @@
 include $(TOPDIR)/rules.mk
 
 PKG_NAME:=cups
-PKG_VERSION:=2.4.6
+PKG_VERSION:=2.4.7
 PKG_RELEASE:=2
 
 PKG_MAINTAINER:=Tobias Waldvogel <tobias.waldvogel@gmail.com>
 PKG_SOURCE_PROTO:=git
 PKG_SOURCE_URL:=https://github.com/OpenPrinting/cups.git
 PKG_SOURCE_VERSION:=tags/v$(PKG_VERSION)
-PKG_HASH:=1a61eeaa660861f8519174ee07f0d636c5a88026cc6773f0c162b33fefa9d1be
+PKG_HASH:=54bb5234f617f6db0ee36c4439c1f89ae50f0ad998fa5dc4d095526fba6b4c98
 PKG_LICENSE:=GPL-2.0
 PKG_LICENSE_FILES:=LICENSE.txt
 
@@ -47,8 +47,8 @@ endef
 
 define Package/cups-bsd
 $(call Package/cups/Default)
-  SECTION:=utils
-  CATEGORY:=Utilities
+  SECTION:=net
+  CATEGORY:=Network
   DEPENDS:=+libcups
   TITLE:=Common UNIX Printing System - BSD commands (old)
 endef
@@ -59,8 +59,8 @@ endef
 
 define Package/cups-client
 $(call Package/cups/Default)
-  SECTION:=utils
-  CATEGORY:=Utilities
+  SECTION:=net
+  CATEGORY:=Network
   DEPENDS:=+libcups +libcupsimage
   TITLE:=Common UNIX Printing System - Client commands
 endef
@@ -77,7 +77,7 @@ define Package/libcups
 $(call Package/cups/Default)
   SECTION:=libs
   CATEGORY:=Libraries
-  DEPENDS:=+zlib +libpthread +libpng +libjpeg +libubox +libubus
+  DEPENDS:=+zlib +libpthread +libpng +libjpeg +libubox +libubus +libopenssl
   TITLE:=Common UNIX Printing System - Core library
 endef
 
@@ -111,9 +111,7 @@ CONFIGURE_ARGS += \
 		--with-tls=no \
 		--disable-acl \
 		--disable-pam \
-		--disable-gssapi \
-		--without-perl \
-		--without-python
+		--disable-gssapi
 
 CONFIGURE_VARS += \
 		UNAME="Linux" \

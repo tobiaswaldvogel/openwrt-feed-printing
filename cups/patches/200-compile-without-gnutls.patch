@@ -1,0 +1,29 @@
+--- a/cups/hash.c
++++ b/cups/hash.c
+@@ -12,7 +12,7 @@
+ #include "md5-internal.h"
+ #ifdef HAVE_OPENSSL
+ #  include <openssl/evp.h>
+-#else // HAVE_GNUTLS
++#elif defined(HAVE_GNUTLS)
+ #  include <gnutls/crypto.h>
+ #endif // HAVE_OPENSSL
+ 
+@@ -198,7 +198,7 @@
+ #ifdef HAVE_OPENSSL
+   const EVP_MD	*md = NULL;		// Message digest implementation
+   EVP_MD_CTX	*ctx;			// Context
+-#else // HAVE_GNUTLS
++#elif defined(HAVE_GNUTLS)
+   gnutls_digest_algorithm_t alg = GNUTLS_DIG_UNKNOWN;
+ 					// Algorithm
+   gnutls_hash_hd_t ctx;			// Context
+@@ -262,7 +262,7 @@
+     return ((ssize_t)hashlen);
+   }
+ 
+-#else // HAVE_GNUTLS
++#elif defined(HAVE_GNUTLS)
+   if (!strcmp(algorithm, "sha"))
+   {
+     // SHA-1
